@@ -9,8 +9,7 @@ import plotly.express as px
 # Read the SpaceX data into pandas dataframe
 spacex_df = pd.read_csv("https://cf-courses-data.s3.us.cloud-object-storage.appdomain.cloud/IBM-DS0321EN-SkillsNetwork/datasets/dataset_part_2.csv")
 
-# Verificar las primeras filas y las columnas
-print(spacex_df.head())
+# Print the column names to check for discrepancies
 print(spacex_df.columns)
 
 # Eliminar filas con valores nulos en columnas críticas
@@ -28,7 +27,9 @@ app.layout = html.Div(children=[
     html.H1('SpaceX Launch Records Dashboard',
             style={'textAlign': 'center', 'color': '#503D36', 'font-size': 40}),
     
-    # Dropdown para seleccionar el Launch Site
+    # Input para buscar el Launch Site
+    dcc.Input(id='site-input', type='text', placeholder='Search for a Launch Site...', style={'width': '50%'}),
+    html.Br(),
     dcc.Dropdown(id='site-dropdown',
                  options=[
                      {'label': 'All Sites', 'value': 'ALL'},
@@ -59,36 +60,67 @@ app.layout = html.Div(children=[
     html.Div(dcc.Graph(id='success-payload-scatter-chart')),
 ])
 
-# Callback para actualizar el gráfico de pie
+@app.callback(
+    Output(component_id='site-dropdown', component_property='options'),
+    Input(component_id='site-input', component_property='value')
+)
+def update_site_dropdown(search_value):
+    # Filtrar las opciones del dropdown según el valor de búsqueda
+    filtered_options = [{'label': site, 'value': site} for site in spacex_df['LaunchSite'].unique() if search_value.lower() in site.lower()]
+    return [{'label': 'All Sites', 'value': 'ALL'}] + filtered_options
+
 @app.callback(
     Output(component_id='success-pie-chart', component_property='figure'),
-    Input(component_id='site-dropdown', component_property='value')
+    [Input(component_id='site-dropdown', component_property='value'),
+     Input(component_id='payload-slider', component_property='value')]
 )
-def update_pie_chart(selected_site):
+def update_pie_chart(selected_site, payload_range):
+    # Filtrar los datos por rango de Payload
+    filtered_df = spacex_df[(spacex_df['PayloadMass'] >= payload_range[0]) & 
+                            (spacex_df['PayloadMass'] <= payload_range[1])]
+    
     if selected_site == 'ALL':
-        fig = px.pie(spacex_df,
-                     values='Class',
-                     names='LaunchSite',
-                     title='Total Success Launches By Site')
-    else:
-        filtered_df = spacex_df[spacex_df['LaunchSite'] == selected_site]
+        # Contar éxitos (Class=1) y fracasos (Class=0) en total
         success_counts = filtered_df['Class'].value_counts().reset_index()
         success_counts.columns = ['Outcome', 'Count']
+        success_counts['Outcome'] = success_counts['Outcome'].replace({1: 'Success', 0: 'Failure'})
+        
+        # Crear el gráfico de pastel para todos los sitios
         fig = px.pie(success_counts,
                      values='Count',
                      names='Outcome',
-                     title=f'Success vs. Failed Launches for {selected_site}')
+                     title='Total Success and Failure Launches')
+    else:
+        # Filtrar los datos por el Launch Site seleccionado
+        filtered_df = filtered_df[filtered_df['LaunchSite'].str.contains(selected_site, case=False)]
+        
+        if filtered_df.empty:
+            # Si no hay datos para el sitio seleccionado, mostrar un gráfico vacío o un mensaje
+            fig = px.pie(title=f'No data available for {selected_site}')
+        else:
+            # Contar los éxitos (1) y fracasos (0) para ese sitio
+            success_failure_counts = filtered_df['Class'].value_counts().reset_index()
+            success_failure_counts.columns = ['Outcome', 'Count']
+            success_failure_counts['Outcome'] = success_failure_counts['Outcome'].replace({1: 'Success', 0: 'Failure'})
+            
+            # Crear el gráfico de pastel para el sitio seleccionado
+            fig = px.pie(success_failure_counts,
+                         values='Count',
+                         names='Outcome',
+                         title=f'Success and Failure Launches for {selected_site}')
+    
     return fig
 
-# Callback para actualizar el gráfico de scatter
 @app.callback(
     Output(component_id='success-payload-scatter-chart', component_property='figure'),
     [Input(component_id='site-dropdown', component_property='value'),
      Input(component_id='payload-slider', component_property='value')]
 )
 def update_scatter_chart(selected_site, payload_range):
+    # Filtrar los datos por rango de Payload
     filtered_df = spacex_df[(spacex_df['PayloadMass'] >= payload_range[0]) &
                             (spacex_df['PayloadMass'] <= payload_range[1])]
+    
     if selected_site == 'ALL':
         fig = px.scatter(filtered_df,
                          x='PayloadMass',
@@ -96,12 +128,13 @@ def update_scatter_chart(selected_site, payload_range):
                          color='BoosterVersion',
                          title='Correlation Between Payload and Success for All Sites')
     else:
-        filtered_df = filtered_df[filtered_df['LaunchSite'] == selected_site]
+        filtered_df = filtered_df[filtered_df['LaunchSite'].str.contains(selected_site, case=False)]
         fig = px.scatter(filtered_df,
                          x='PayloadMass',
                          y='Class',
                          color='BoosterVersion',
                          title=f'Correlation Between Payload and Success for {selected_site}')
+    
     return fig
 
 # Ejecutar la aplicación
